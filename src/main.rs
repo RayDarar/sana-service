@@ -1,20 +1,23 @@
 use std::env;
 
-use actix_web::{get, web, App, HttpServer, Responder};
+use actix_web::{web, App, HttpResponse, HttpServer};
 use anyhow::Result;
 
-use serde_json::json;
-use tracing::Level;
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-struct AppState {}
+mod error;
+mod health;
+
+pub struct AppState {}
+
+fn config_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(health::register());
+}
 
 #[actix_web::main]
 async fn main() -> Result<()> {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::TRACE)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+    let tracing_layer = tracing_subscriber::fmt::layer().json().boxed();
+    tracing_subscriber::registry().with(tracing_layer).init();
 
     let port = match env::var("PORT") {
         Ok(value) => value.parse::<u16>()?,
@@ -26,7 +29,8 @@ async fn main() -> Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(state.clone())
-            .service(web::scope("/api").service(health))
+            .service(web::scope("/api").configure(config_routes))
+            .default_service(web::to(HttpResponse::NotFound))
     })
     .workers(4)
     .bind(("127.0.0.1", port))?
@@ -34,11 +38,4 @@ async fn main() -> Result<()> {
     .await?;
 
     Ok(())
-}
-
-#[get("/health")]
-async fn health() -> impl Responder {
-    web::Json(json!({
-        "status": true
-    }))
 }
